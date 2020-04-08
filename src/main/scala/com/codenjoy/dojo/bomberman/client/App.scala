@@ -14,7 +14,7 @@ object Main extends App {
   def url = get("url")
 
   override def main(args: Array[String]): Unit = {
-    val agent = new AgentImpl(new AlgoImpl(new NearestBombermanHeuristic))
+    val agent = new AgentImpl()
     val board = new Board
     WebSocketRunner.runClient(s"http://$url/codenjoy-contest/board/player/$secret?code=$code", agent, board)
   }

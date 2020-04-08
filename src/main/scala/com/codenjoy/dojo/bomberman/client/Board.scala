@@ -7,19 +7,36 @@ import com.codenjoy.dojo.bomberman.model.Elements._
 import com.codenjoy.dojo.client.AbstractBoard
 import com.codenjoy.dojo.services.{Direction, Point}
 import com.codenjoy.dojo.services.PointImpl.pt
+import com.codenjoy.dojo.bomberman.client.Point._
 
 import scala.collection.JavaConverters._
 
+object Board {
+  def apply(s: Int): Board = new Board() {
+    size = s
+  }
+}
 
-case class Board() extends AbstractBoard[Elements] with Cloneable {
+case class Board() extends AbstractBoard[Elements] with Cloneable { self =>
 
-  import Helpers._
+  override def clone: Board = new Board() {
+    size = self.size
+    field = self.field.clone()
+    layersString = self.layersString
+  }
 
-  override def clone: Board = ???
+  def act(action: Action): Board = {
+    val board = clone
+    board.move(action.move)
+    board.bomb(action.bomb)
+    board
+  }
 
-  def act(action: Action): Board = ???
+  def bomb(bomb: Bomb): Unit = ???
 
-  def isBarrierAt(x: Int, y: Int): Boolean = getImpassableBlocks.contains(pt(x, y))
+  def move(move: Move): Unit = ???
+
+  def isBarrierAt(x: Int, y: Int): Boolean = impassableBlocks.contains(pt(x, y))
 
   def isBarrierAt(point: Point): Boolean = isBarrierAt(point.getX, point.getY)
 
@@ -34,78 +51,76 @@ case class Board() extends AbstractBoard[Elements] with Cloneable {
     super.getAt(x, y)
   }
 
-  def getPossibleMoves: Set[Point] = ???
+  def possibleMoves: List[Move] = (pointNeighbours(myBomberman, 1) &~ impassableBlocks).toList.map(p => myBomberman.moveTo(p.getX - myBomberman.getX, p.getY - myBomberman.getY))
 
-  def getPossibleActions: Set[Action] = ???
+  def possibleActions: List[Action] = possibleMoves.flatMap { m =>
+    List(Action(m, NoBomb), Action(m, BombBeforeMove), Action(m, BombAfterMove))
+  }
 
-  def getPossibleGames(depth: Int = 3): List[Game] = ???
+  def impassable: Set[Point] = meatChoppers ++ walls ++ bombs ++ destroyableWalls ++ otherBombermans
 
-  def getImpassable: Set[Point] = getMeatChoppers ++ getWalls ++ getBombs ++ getDestroyableWalls ++ getOtherBombermans
-
-  def getImpassableBlocks: Set[Point] = getMeatChoppers ++ getWalls ++ getBombs ++ getDestroyableWalls
+  def impassableBlocks: Set[Point] = meatChoppers ++ walls ++ bombs ++ destroyableWalls
 
   //use this method as debug info - prints board information to the console
   override def toString: String =
     s"""
        |Board: $boardAsString
-       |My bomberman at: $getMyBomberman
-       |Other bombermans at: $getOtherBombermans
-       |Meat choppers at: $getMeatChoppers
-       |Destroyable walls at: $getDestroyableWalls
-       |Bombs at: $getBombs
-       |Blasts at: $getBlasts
-       |Possible blasts at: $getFutureBlasts
+       |My bomberman at: $myBomberman
+       |Other bombermans at: $otherBombermans
+       |Meat choppers at: $meatChoppers
+       |Destroyable walls at: $destroyableWalls
+       |Bombs at: $bombs
+       |Blasts at: $blasts
+       |Possible blasts at: $futureBlasts
      """.stripMargin
 
-  def getMyBomberman: Point = get(BOMBERMAN, BOMB_BOMBERMAN, DEAD_BOMBERMAN).get(0)
+  def myBomberman: Point = get(BOMBERMAN, BOMB_BOMBERMAN, DEAD_BOMBERMAN).get(0)
 
-  def getOtherBombermans: Set[Point] = get(OTHER_BOMBERMAN, OTHER_BOMB_BOMBERMAN, OTHER_DEAD_BOMBERMAN).asScala.toSet
+  def otherBombermans: Set[Point] = get(OTHER_BOMBERMAN, OTHER_BOMB_BOMBERMAN, OTHER_DEAD_BOMBERMAN).asScala.toSet
 
   def isMyBombermanDead: Boolean = !get(DEAD_BOMBERMAN).isEmpty
 
-  def getMeatChoppers: Set[Point] = get(MEAT_CHOPPER).asScala.toSet
+  def meatChoppers: Set[Point] = get(MEAT_CHOPPER).asScala.toSet
 
-  def getWalls: Set[Point] = get(WALL).asScala.toSet
+  def walls: Set[Point] = get(WALL).asScala.toSet
 
-  def getDestroyableWalls: Set[Point] = get(DESTROYABLE_WALL).asScala.toSet
+  def destroyableWalls: Set[Point] = get(DESTROYABLE_WALL).asScala.toSet
 
-  def getBombs: Set[Point] = {
+  def bombs: Set[Point] = {
     val result = get(BOMB_TIMER_1).asScala ++ get(BOMB_TIMER_2).asScala ++ get(BOMB_TIMER_3).asScala ++
       get(BOMB_TIMER_4).asScala ++ get(BOMB_TIMER_5).asScala ++
       get(BOMB_BOMBERMAN).asScala ++ get(OTHER_BOMB_BOMBERMAN).asScala
     result.toSet
   }
 
-  def getBlasts: util.Collection[Point] = get(BOOM)
+  def blasts: Set[Point] = get(BOOM).asScala.toSet
 
-  def addPointNeighbours(point: Point, length: Int = 3): Set[Point] =
+  def pointNeighbours(point: Point, length: Int = 3): Set[Point] =
     (1 to length).flatMap(i => Set(
       pt(point.getX - i, point.getY),
       pt(point.getX + i, point.getY),
       pt(point.getX, point.getY - i),
       pt(point.getX, point.getY + i)
-    )).filter(p => !p.isOutOf(size) && !getWalls.contains(p)).toSet
+    )).filter(p => !p.isOutOf(size) && !walls.contains(p)).toSet
 
 
-  def getFutureBlasts: Set[Point] =
-    getBombs.flatMap(bomb => getFutureBlasts(bomb))
+  def futureBlasts: Set[Point] =
+    bombs.flatMap(bomb => bombBlasts(bomb))
 
-  def getFutureBlasts(bomb: Point): Set[Point] =
-    addPointNeighbours(bomb) ++ Set(bomb)
+  def bombBlasts(bomb: Point): Set[Point] =
+    pointNeighbours(bomb) ++ Set(bomb)
 
-  def getBlastWithBombAndTimer: Seq[BombWithBlasts] = getBombs.map(b => BombWithBlasts(b, addPointNeighbours(b), getAt(b).ch() - '0')).toSeq
+  def blastWithBombAndTimer: Seq[BombWithBlasts] = bombs.map(b => BombWithBlasts(b, pointNeighbours(b), getAt(b).ch() - '0')).toSeq
 
-  def getEuclideanDistanceToPoint(from: Point, to: Point): Int =
-    Math.abs(from.getX - to.getX) + Math.abs(from.getY - to.getY)
 
-  def getNearestBomberman(from: Point): Option[Point] = getOtherBombermans.toSeq match {
+  def nearestBomberman(from: Point): Option[Point] = otherBombermans.toSeq match {
     case Nil => None
-    case a@_ => Some(a.minBy(getEuclideanDistanceToPoint(from, _)))
+    case a@_ => Some(a.minBy(from.euclideanDistanceToPoint(_)))
   }
 
-  def getNearestMeatChopper(from: Point): Option[Point] = getMeatChoppers.toSeq match {
+  def nearestMeatChopper(from: Point): Option[Point] = meatChoppers.toSeq match {
     case Nil => None
-    case a@_ => Some(a.minBy(getEuclideanDistanceToPoint(from, _)))
+    case a@_ => Some(a.minBy(from.euclideanDistanceToPoint(_)))
   }
 
   def nextMoveToPoint(from: Point, to: Point): Option[Direction] = closestPathToPoint(from, to).flatMap(_.headOption)
@@ -153,20 +168,6 @@ case class Board() extends AbstractBoard[Elements] with Cloneable {
   }
 }
 
-object Helpers {
-
-  def movePoint(x: Int, y: Int, point: Point): Point = createPoint(point.getX + x, point.getY + y)
-
-  def movePoint(d: Direction, point: Point): Point = d match {
-    case Direction.DOWN => createPoint(point.getX, point.getY + 1)
-    case Direction.LEFT => createPoint(point.getX - 1, point.getY)
-    case Direction.UP => createPoint(point.getX, point.getY - 1)
-    case Direction.RIGHT => createPoint(point.getX + 1, point.getY)
-  }
-
-  def createPoint(x: Int, y: Int): Point = pt(x, y)
-
-}
 
 case class BombWithBlasts(bombLocation: Point, possibleBlasts: Set[Point], timeToBlast: Int)
 
