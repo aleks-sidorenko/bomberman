@@ -11,30 +11,45 @@ import com.codenjoy.dojo.bomberman.client.Point._
 
 import scala.collection.JavaConverters._
 
-object Board {
-  def apply(s: Int): Board = new Board() {
-    size = s
+
+
+class Board() extends AbstractBoard[Elements] with Cloneable { self =>
+
+  override def hashCode(): Int = this.field.hashCode()
+
+  override def equals(obj: Any): Boolean = {
+    obj match {
+      case board: Board => board.field == field
+      case _ => false
+    }
   }
-}
 
-case class Board() extends AbstractBoard[Elements] with Cloneable { self =>
-
-  override def clone: Board = new Board() {
-    size = self.size
-    field = self.field.clone()
-    layersString = self.layersString
-  }
-
-  def act(action: Action): Board = {
-    val board = clone
-    board.move(action.move)
-    board.bomb(action.bomb)
+  override def clone: Board = {
+    val board = new Board()
+    board.size = self.size
+    board.field = Utils.deepCopy3d(self.field)
+    board.layersString = self.layersString
     board
   }
 
-  def bomb(bomb: Bomb): Unit = ???
+  def act(action: Action): Board = {
+    val point = myBomberman.move(action.move)
+    if (!impassable.contains(point)) {
+      val board = clone
+      blastWithBombAndTimer.foreach {
+        case BombWithBlasts(_, blasts, t) if t == 0 =>
+          blasts.foreach { p => board.set(p, if (p == myBomberman) DEAD_BOMBERMAN else NONE) }
+        case BombWithBlasts(p, _, t) => board.set(p.getX, p.getY, ('0'.toInt + t).toChar)
+      }
+      if (!board.isMyBombermanDead) {
+        board.set(myBomberman, NONE)
+        board.set(point, BOMBERMAN)
+      }
+      board
+    } else this
+  }
 
-  def move(move: Move): Unit = ???
+  def set(point: Point, element: Element): Unit = set(point.getX, point.getY, element.ch())
 
   def isBarrierAt(x: Int, y: Int): Boolean = impassableBlocks.contains(pt(x, y))
 
@@ -51,15 +66,15 @@ case class Board() extends AbstractBoard[Elements] with Cloneable { self =>
     super.getAt(x, y)
   }
 
-  def possibleMoves: List[Move] = (pointNeighbours(myBomberman, 1) &~ impassableBlocks).toList.map(p => myBomberman.moveTo(p.getX - myBomberman.getX, p.getY - myBomberman.getY))
+  lazy val possibleMoves: List[Move] = (pointNeighbours(myBomberman, 1) &~ impassableBlocks).toList.map(p => myBomberman.moveTo(p.getX - myBomberman.getX, p.getY - myBomberman.getY)) ++ (Stay :: Nil)
 
-  def possibleActions: List[Action] = possibleMoves.flatMap { m =>
+  lazy val possibleActions: List[Action] = possibleMoves.flatMap { m =>
     List(Action(m, NoBomb), Action(m, BombBeforeMove), Action(m, BombAfterMove))
   }
 
-  def impassable: Set[Point] = meatChoppers ++ walls ++ bombs ++ destroyableWalls ++ otherBombermans
+  lazy val impassable: Set[Point] = meatChoppers ++ walls ++ bombs ++ destroyableWalls ++ otherBombermans
 
-  def impassableBlocks: Set[Point] = meatChoppers ++ walls ++ bombs ++ destroyableWalls
+  lazy val impassableBlocks: Set[Point] = meatChoppers ++ walls ++ bombs ++ destroyableWalls
 
   //use this method as debug info - prints board information to the console
   override def toString: String =
@@ -74,26 +89,26 @@ case class Board() extends AbstractBoard[Elements] with Cloneable { self =>
        |Possible blasts at: $futureBlasts
      """.stripMargin
 
-  def myBomberman: Point = get(BOMBERMAN, BOMB_BOMBERMAN, DEAD_BOMBERMAN).get(0)
+  lazy val myBomberman: Point = get(BOMBERMAN, BOMB_BOMBERMAN, DEAD_BOMBERMAN).get(0)
 
-  def otherBombermans: Set[Point] = get(OTHER_BOMBERMAN, OTHER_BOMB_BOMBERMAN, OTHER_DEAD_BOMBERMAN).asScala.toSet
+  lazy val otherBombermans: Set[Point] = get(OTHER_BOMBERMAN, OTHER_BOMB_BOMBERMAN, OTHER_DEAD_BOMBERMAN).asScala.toSet
 
-  def isMyBombermanDead: Boolean = !get(DEAD_BOMBERMAN).isEmpty
+  lazy val isMyBombermanDead: Boolean = !get(DEAD_BOMBERMAN).isEmpty
 
-  def meatChoppers: Set[Point] = get(MEAT_CHOPPER).asScala.toSet
+  lazy val meatChoppers: Set[Point] = get(MEAT_CHOPPER).asScala.toSet
 
-  def walls: Set[Point] = get(WALL).asScala.toSet
+  lazy val walls: Set[Point] = get(WALL).asScala.toSet
 
-  def destroyableWalls: Set[Point] = get(DESTROYABLE_WALL).asScala.toSet
+  lazy val destroyableWalls: Set[Point] = get(DESTROYABLE_WALL).asScala.toSet
 
-  def bombs: Set[Point] = {
+  lazy val bombs: Set[Point] = {
     val result = get(BOMB_TIMER_1).asScala ++ get(BOMB_TIMER_2).asScala ++ get(BOMB_TIMER_3).asScala ++
       get(BOMB_TIMER_4).asScala ++ get(BOMB_TIMER_5).asScala ++
       get(BOMB_BOMBERMAN).asScala ++ get(OTHER_BOMB_BOMBERMAN).asScala
     result.toSet
   }
 
-  def blasts: Set[Point] = get(BOOM).asScala.toSet
+  lazy val blasts: Set[Point] = get(BOOM).asScala.toSet
 
   def pointNeighbours(point: Point, length: Int = 3): Set[Point] =
     (1 to length).flatMap(i => Set(
@@ -104,14 +119,13 @@ case class Board() extends AbstractBoard[Elements] with Cloneable { self =>
     )).filter(p => !p.isOutOf(size) && !walls.contains(p)).toSet
 
 
-  def futureBlasts: Set[Point] =
+  lazy val futureBlasts: Set[Point] =
     bombs.flatMap(bomb => bombBlasts(bomb))
 
   def bombBlasts(bomb: Point): Set[Point] =
     pointNeighbours(bomb) ++ Set(bomb)
 
-  def blastWithBombAndTimer: Seq[BombWithBlasts] = bombs.map(b => BombWithBlasts(b, pointNeighbours(b), getAt(b).ch() - '0')).toSeq
-
+  lazy val blastWithBombAndTimer: Seq[BombWithBlasts] = bombs.map(b => BombWithBlasts(b, pointNeighbours(b), getAt(b).ch() - '0')).toSeq
 
   def nearestBomberman(from: Point): Option[Point] = otherBombermans.toSeq match {
     case Nil => None
@@ -166,6 +180,8 @@ case class Board() extends AbstractBoard[Elements] with Cloneable { self =>
     val res = bfs(from, to)
     res
   }
+
+  lazy val isMyBombermanBlocked: Boolean = possibleActions.forall(a => a.move == Stay)
 }
 
 

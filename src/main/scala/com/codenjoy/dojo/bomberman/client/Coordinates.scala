@@ -25,6 +25,7 @@ object Point {
       case Left => createPoint(point.getX - 1, point.getY)
       case Up => createPoint(point.getX, point.getY - 1)
       case Right => createPoint(point.getX + 1, point.getY)
+      case _ => point
     }
 
     def moveTo(dx: Int, dy: Int): Move = {

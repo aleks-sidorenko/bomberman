@@ -6,6 +6,8 @@ import com.codenjoy.dojo.client.Solver
 import com.codenjoy.dojo.bomberman.client.Point._
 import com.codenjoy.dojo.services.Point
 
+import scala.collection.mutable
+
 
 case class Game(board: Board, prev: Option[(Game, Action)], ticks: Int) {
   self =>
@@ -48,24 +50,41 @@ case class Game(board: Board, prev: Option[(Game, Action)], ticks: Int) {
 
   def findByTick(ts: Int): Option[Game] = {
     if (ts == ticks) Some(this)
-    else before.flatMap { g => g.findByTick(ts - 1) }
+    else before.flatMap { g => g.findByTick(ts) }
   }
 
-  def possibleGames(depth: Int = 5): List[Game] = {
-    if (depth == 0) Nil
-    else {
-      board.possibleActions.map(self.tick).flatMap(g => g.possibleGames(depth - 1))
+  lazy val bestGame: Game = {
+    implicit val ordering = Ordering.by[Game, Score](_.totalScore)
+    val queue = new mutable.PriorityQueue[Game]()
+    queue.enqueue(possibleGames:_*)
+    var max = 10
+    while (max > 0 && queue.nonEmpty) {
+      val best = queue.dequeue()
+      queue.enqueue(best.possibleGames:_*)
+      max -= 1
     }
+
+    (for {
+      g <- queue.headOption
+      g <- g.findByTick(ticks + 1)
+    } yield g).getOrElse(tick(Action.default))
   }
 
-  def score: Score = {
-    (if (isMyBombermanKilled) Score.myBombermanDead else 0) +
-      (myKilledBombermans.size * Score.otherBombermanKilled) +
-      (myKilledMeatChoppers.size * Score.meatChopperKilled) +
-      (myDestroyedWalls.size * Score.wallDestroyed)
+  lazy val possibleGames: List[Game] = board.possibleActions.map(self.tick)
+
+  lazy val score: Score = {
+    var score = Score.zero
+    score += Score.scoreIf(action.exists(a => a.move != Stay)) { Score.moving }
+    score += Score.scoreIf(action.exists(a => a.bomb != NoBomb)) { Score.bomb }
+    score += Score.scoreIf(isMyBombermanKilled) { Score.myBombermanDead }
+    score += Score.scoreIf(board.isMyBombermanBlocked) { Score.blocked }
+    score += myKilledBombermans.size * Score.otherBombermanKilled
+    score += myKilledMeatChoppers.size * Score.meatChopperKilled
+    score += myDestroyedWalls.size * Score.wallDestroyed
+    score
   }
 
-  def totalScore: Score = {
+  lazy val totalScore: Score = {
     self.reduce {
       _.score
     }
@@ -77,10 +96,16 @@ object Game {
 }
 
 object Score {
-  val myBombermanDead = -50
-  val otherBombermanKilled = 1000
-  val meatChopperKilled = 100
-  val wallDestroyed = 10
+  val zero: Score = 0.0
+  val moving: Score  = 2
+  val bomb: Score  = 5
+  val blocked: Score  = 50
+  val myBombermanDead: Score  = -50
+  val otherBombermanKilled: Score  = 1000
+  val meatChopperKilled: Score  = 100
+  val wallDestroyed: Score  = 10
+
+  def scoreIf(p: => Boolean)(s: Score): Score = if (p) s else zero
 }
 
 
@@ -100,12 +125,8 @@ class AgentImpl() extends Solver[Board] with Agent {
 
   def nextMove(board: Board): Action = {
     initGame(board)
-    val sorted = game.possibleGames().sortBy(_.totalScore).reverse
-    (for {
-      g <- sorted.headOption
-      g <- g.findByTick(game.ticks + 1)
-      a <- g.action
-    } yield a).getOrElse(Action.default)
+    game = game.bestGame
+    game.action.getOrElse(Action(Stay, BombBeforeMove))
   }
 }
 
