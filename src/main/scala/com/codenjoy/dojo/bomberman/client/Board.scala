@@ -10,16 +10,17 @@ import com.codenjoy.dojo.services.PointImpl.pt
 import com.codenjoy.dojo.bomberman.client.Point._
 
 import scala.collection.JavaConverters._
+import scala.util.Random
 
 
 
 class Board() extends AbstractBoard[Elements] with Cloneable { self =>
 
-  override def hashCode(): Int = this.field.hashCode()
+  override def hashCode(): Int = this.myBomberman.hashCode()
 
   override def equals(obj: Any): Boolean = {
     obj match {
-      case board: Board => board.field == field
+      case board: Board => board.myBomberman == myBomberman
       case _ => false
     }
   }
@@ -33,20 +34,27 @@ class Board() extends AbstractBoard[Elements] with Cloneable { self =>
   }
 
   def act(action: Action): Board = {
-    val point = myBomberman.move(action.move)
-    if (!impassable.contains(point)) {
-      val board = clone
-      blastWithBombAndTimer.foreach {
-        case BombWithBlasts(_, blasts, t) if t == 0 =>
-          blasts.foreach { p => board.set(p, if (p == myBomberman) DEAD_BOMBERMAN else NONE) }
-        case BombWithBlasts(p, _, t) => board.set(p.getX, p.getY, ('0'.toInt + t).toChar)
-      }
-      if (!board.isMyBombermanDead) {
-        board.set(myBomberman, NONE)
-        board.set(point, BOMBERMAN)
-      }
-      board
-    } else this
+    val source = myBomberman
+    val target = source.move(action.move)
+    val board = clone
+
+    // blast bombs
+    blastWithBombAndTimer.foreach {
+      case BombWithBlasts(_, blasts, t) if t == 0 => // time to bomb
+        blasts.foreach { p =>
+          board.set(p, if (p == source) DEAD_BOMBERMAN else NONE)
+        }
+      case BombWithBlasts(p, _, t) => // reduce timer of bomb
+        board.set(p, bombFromTimer(t - 1))
+    }
+
+    // move bomberman
+    if (action.move != Stay && !board.isMyBombermanDead) {
+      board.set(target, BOMBERMAN)
+      if (board.getAt(source) == BOMBERMAN) board.set(source, NONE)
+    }
+
+    board
   }
 
   def set(point: Point, element: Element): Unit = set(point.getX, point.getY, element.ch())
@@ -66,15 +74,15 @@ class Board() extends AbstractBoard[Elements] with Cloneable { self =>
     super.getAt(x, y)
   }
 
-  lazy val possibleMoves: List[Move] = (pointNeighbours(myBomberman, 1) &~ impassableBlocks).toList.map(p => myBomberman.moveTo(p.getX - myBomberman.getX, p.getY - myBomberman.getY)) ++ (Stay :: Nil)
+  def possibleMoves: List[Move] = Random.shuffle((pointNeighbours(myBomberman, 1) &~ impassable).toList.map(p => myBomberman.moveTo(p.getX - myBomberman.getX, p.getY - myBomberman.getY)) ++ (Stay :: Nil))
 
-  lazy val possibleActions: List[Action] = possibleMoves.flatMap { m =>
+  def possibleActions: List[Action] = Random.shuffle(possibleMoves.flatMap { m =>
     List(Action(m, NoBomb), Action(m, BombBeforeMove), Action(m, BombAfterMove))
-  }
+  })
 
-  lazy val impassable: Set[Point] = meatChoppers ++ walls ++ bombs ++ destroyableWalls ++ otherBombermans
+  def impassable: Set[Point] = meatChoppers ++ walls ++ bombs ++ destroyableWalls ++ otherBombermans
 
-  lazy val impassableBlocks: Set[Point] = meatChoppers ++ walls ++ bombs ++ destroyableWalls
+  def impassableBlocks: Set[Point] = meatChoppers ++ walls ++ bombs ++ destroyableWalls
 
   //use this method as debug info - prints board information to the console
   override def toString: String =
@@ -89,26 +97,27 @@ class Board() extends AbstractBoard[Elements] with Cloneable { self =>
        |Possible blasts at: $futureBlasts
      """.stripMargin
 
-  lazy val myBomberman: Point = get(BOMBERMAN, BOMB_BOMBERMAN, DEAD_BOMBERMAN).get(0)
+  def myBomberman: Point = get(BOMBERMAN, BOMB_BOMBERMAN, DEAD_BOMBERMAN).get(0)
 
-  lazy val otherBombermans: Set[Point] = get(OTHER_BOMBERMAN, OTHER_BOMB_BOMBERMAN, OTHER_DEAD_BOMBERMAN).asScala.toSet
+  def otherBombermans: Set[Point] = get(OTHER_BOMBERMAN, OTHER_BOMB_BOMBERMAN, OTHER_DEAD_BOMBERMAN).asScala.toSet
 
-  lazy val isMyBombermanDead: Boolean = !get(DEAD_BOMBERMAN).isEmpty
+  def isMyBombermanDead: Boolean = !get(DEAD_BOMBERMAN).isEmpty
 
-  lazy val meatChoppers: Set[Point] = get(MEAT_CHOPPER).asScala.toSet
+  def isMyBombermanKilled: Boolean = isMyBombermanDead || bombBlasts.contains(myBomberman)
 
-  lazy val walls: Set[Point] = get(WALL).asScala.toSet
+  def meatChoppers: Set[Point] = get(MEAT_CHOPPER).asScala.toSet
 
-  lazy val destroyableWalls: Set[Point] = get(DESTROYABLE_WALL).asScala.toSet
+  def walls: Set[Point] = get(WALL).asScala.toSet
 
-  lazy val bombs: Set[Point] = {
+  def destroyableWalls: Set[Point] = get(DESTROYABLE_WALL).asScala.toSet
+
+  def bombs: Set[Point] = {
     val result = get(BOMB_TIMER_1).asScala ++ get(BOMB_TIMER_2).asScala ++ get(BOMB_TIMER_3).asScala ++
-      get(BOMB_TIMER_4).asScala ++ get(BOMB_TIMER_5).asScala ++
-      get(BOMB_BOMBERMAN).asScala ++ get(OTHER_BOMB_BOMBERMAN).asScala
+      get(BOMB_TIMER_4).asScala ++ get(BOMB_TIMER_5).asScala ++ get(BOOM).asScala
     result.toSet
   }
 
-  lazy val blasts: Set[Point] = get(BOOM).asScala.toSet
+  def blasts: Set[Point] = get(BOOM).asScala.toSet
 
   def pointNeighbours(point: Point, length: Int = 3): Set[Point] =
     (1 to length).flatMap(i => Set(
@@ -119,13 +128,15 @@ class Board() extends AbstractBoard[Elements] with Cloneable { self =>
     )).filter(p => !p.isOutOf(size) && !walls.contains(p)).toSet
 
 
-  lazy val futureBlasts: Set[Point] =
+  def futureBlasts: Set[Point] =
     bombs.flatMap(bomb => bombBlasts(bomb))
 
   def bombBlasts(bomb: Point): Set[Point] =
     pointNeighbours(bomb) ++ Set(bomb)
 
-  lazy val blastWithBombAndTimer: Seq[BombWithBlasts] = bombs.map(b => BombWithBlasts(b, pointNeighbours(b), getAt(b).ch() - '0')).toSeq
+  def bombBlasts: Set[Point] = blasts.flatMap(p => bombBlasts(p))
+
+  def blastWithBombAndTimer: Seq[BombWithBlasts] = bombs.map(b => BombWithBlasts(b, pointNeighbours(b), bombToTimer(getAt(b)))).toSeq
 
   def nearestBomberman(from: Point): Option[Point] = otherBombermans.toSeq match {
     case Nil => None
@@ -136,6 +147,17 @@ class Board() extends AbstractBoard[Elements] with Cloneable { self =>
     case Nil => None
     case a@_ => Some(a.minBy(from.euclideanDistanceToPoint(_)))
   }
+
+  def nearestBomb(from: Point): Option[Point] = bombs.toSeq match {
+    case Nil => None
+    case a@_ => Some(a.minBy(from.euclideanDistanceToPoint(_)))
+  }
+
+  def nearestMeatChopperDistance: Option[Int] = nearestMeatChopper(myBomberman).map(myBomberman.euclideanDistanceToPoint)
+
+  def nearestBombDistance: Option[Int] = nearestBomb(myBomberman).map(myBomberman.euclideanDistanceToPoint)
+
+  def nearestBombermanDistance: Option[Int] = nearestBomberman(myBomberman).map(myBomberman.euclideanDistanceToPoint)
 
   def nextMoveToPoint(from: Point, to: Point): Option[Direction] = closestPathToPoint(from, to).flatMap(_.headOption)
 
@@ -181,7 +203,7 @@ class Board() extends AbstractBoard[Elements] with Cloneable { self =>
     res
   }
 
-  lazy val isMyBombermanBlocked: Boolean = possibleActions.forall(a => a.move == Stay)
+  def isMyBombermanBlocked: Boolean = possibleActions.forall(a => a.move == Stay)
 }
 
 
